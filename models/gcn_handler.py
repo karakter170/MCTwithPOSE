@@ -8,7 +8,7 @@
 
 import torch
 import numpy as np
-from gcn_model_sota import CrossGCN
+from models.gcn_model_sota import CrossGCN
 
 
 class RelationRefiner:

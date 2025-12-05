@@ -28,22 +28,22 @@ from collections import defaultdict
 from threading import Lock
 from typing import Dict, List, Any, Tuple
 
-from tracker_MCT import TrackerManagerMCT
+from core.tracker_MCT import TrackerManagerMCT
 from topology_manager import TopologyManager
-from continuum_memory import ContinuumStateV2, ContinuumConfig
+from core.continuum_memory import ContinuumStateV2, ContinuumConfig
 
 # >>> NEW: Import Hungarian matcher
 try:
-    from hungarian_matcher import TwoStageHungarianMatcher
+    from core.hungarian_matcher import TwoStageHungarianMatcher
     HUNGARIAN_AVAILABLE = True
     print("[Central] Hungarian Matcher: ENABLED")
 except ImportError:
     HUNGARIAN_AVAILABLE = False
-    print("[Central] Hungarian Matcher: DISABLED (hungarian_matcher.py not found)")
+    print("[Central] Hungarian Matcher: DISABLED (core/hungarian_matcher.py not found)")
 
 # >>> NEW: Import Adaptive Threshold (optional)
 try:
-    from adaptive_threshold import AdaptiveThresholdManager
+    from utils.adaptive_threshold import AdaptiveThresholdManager
     ADAPTIVE_THRESHOLD_AVAILABLE = True
     print("[Central] Adaptive Threshold: ENABLED")
 except ImportError:
