@@ -5,12 +5,17 @@ FINAL TUNED VERSION:
 - Aggressive Quality Scaling for Heavy Occlusion Recovery
 - Motion Gating for Teleportation Prevention
 - Dynamic GCN Weighting
+- Added bounds checking for GCN costs array
+- Added proper logging instead of silent except
 """
 
 import numpy as np
+import logging
 from scipy.optimize import linear_sum_assignment
 from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 @dataclass 
 class MatchResult:
@@ -99,8 +104,12 @@ class HungarianMatcher:
             if refiner_model:
                 try:
                     scores = refiner_model.predict_batch(track, detections, frame_res[0], frame_res[1], curr_time)
-                    gcn_costs = 1.0 - scores
-                except: pass
+                    if scores is not None and len(scores) == len(detections):
+                        gcn_costs = 1.0 - scores
+                    else:
+                        logger.warning(f"GCN scores length mismatch: got {len(scores) if scores is not None else 0}, expected {len(detections)}")
+                except Exception as e:
+                    logger.warning(f"GCN prediction failed for track {gid}: {e}")
 
             track.kf.predict()
             pred_gp = track.kf.x[:2]
@@ -108,12 +117,16 @@ class HungarianMatcher:
             for i, det in enumerate(detections):
                 quality = det.get('quality', 0.5)
                 
-                # 1. Appearance 
+                # 1. Appearance
                 cost_app = self.INF_COST
                 if self.use_appearance:
                     if track.fast_buffer:
-                        dists = [self.compute_appearance_cost(det['feature'], f) for f in track.fast_buffer]
-                        cost_fast = min(dists)
+                        dists = [self.compute_appearance_cost(det['feature'], f) for f in track.fast_buffer if f is not None]
+                        # Guard against empty dists list after filtering None values
+                        if dists:
+                            cost_fast = min(dists)
+                        else:
+                            cost_fast = self.compute_appearance_cost(det['feature'], track.last_known_feature)
                     else:
                         cost_fast = self.compute_appearance_cost(det['feature'], track.last_known_feature)
                     
@@ -153,16 +166,17 @@ class HungarianMatcher:
                         self.iou_weight * cost_iou
                     )
                     
-                    if gcn_costs is not None:
+                    # Apply GCN refinement with bounds checking
+                    if gcn_costs is not None and i < len(gcn_costs):
                         gcn_val = gcn_costs[i]
-                        
+
                         # [TUNED] GCN Weight Scaling
                         base_gcn_weight = 0.40
                         if quality < 0.6:
-                             gcn_weight = base_gcn_weight * (quality / 0.6)
+                            gcn_weight = base_gcn_weight * (quality / 0.6)
                         else:
-                             gcn_weight = base_gcn_weight
-                             
+                            gcn_weight = base_gcn_weight
+
                         total_cost = (1.0 - gcn_weight) * total_cost + (gcn_weight * gcn_val)
 
                 cost_matrix[i, j] = total_cost

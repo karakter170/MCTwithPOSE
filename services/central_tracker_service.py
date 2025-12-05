@@ -21,12 +21,15 @@ import threading
 import queue
 import signal
 import sys
+import logging
 from typing import Optional
 from dataclasses import dataclass
 import os
 from collections import defaultdict
 from threading import Lock
 from typing import Dict, List, Any, Tuple
+
+logger = logging.getLogger(__name__)
 
 from core.tracker_MCT import TrackerManagerMCT
 from topology_manager import TopologyManager
@@ -605,11 +608,22 @@ def process_detection_batch(camera_id: str, events: List[Dict], current_time: fl
         # Logging
         _log_track_update(track, evt, camera_id, group_id)
         
-        # Report to threshold manager
+        # Report to threshold manager with proper index handling
         if threshold_manager is not None:
+            match_score = 0.5  # Default score
+            if hasattr(result, 'cost_matrix') and result.cost_matrix.size > 0 and result.valid_track_ids:
+                try:
+                    # Use valid_track_ids for correct indexing (not group_tracks.keys())
+                    if global_id in result.valid_track_ids:
+                        track_idx = result.valid_track_ids.index(global_id)
+                        if det_idx < result.cost_matrix.shape[0] and track_idx < result.cost_matrix.shape[1]:
+                            match_score = result.cost_matrix[det_idx, track_idx]
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Cost matrix index error: {e}")
+
             threshold_manager.report_match(
                 camera_id=camera_id,
-                match_score=result.cost_matrix[det_idx, list(group_tracks.keys()).index(global_id)] if hasattr(result, 'cost_matrix') and result.cost_matrix.size > 0 else 0.5,
+                match_score=match_score,
                 is_cross_camera=(track.last_cam_id != camera_id if track else False)
             )
     

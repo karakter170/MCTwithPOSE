@@ -174,9 +174,13 @@ class AdaptiveThresholdManager:
         
         if frame_area is None:
             frame_area = self.frame_area
-        
-        # More than 40% of frame covered = very dense
-        area_density = min(1.0, total_bbox_area / (frame_area * 0.4))
+
+        # Guard against division by zero
+        if frame_area <= 0:
+            area_density = 0.0
+        else:
+            # More than 40% of frame covered = very dense
+            area_density = min(1.0, total_bbox_area / (frame_area * 0.4))
         
         # Method 3: Overlap-based density
         overlap_score = self._compute_overlap_density(detections)

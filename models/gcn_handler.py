@@ -5,10 +5,15 @@
 # 1. Always normalize features (don't just warn)
 # 2. Proper dtype handling
 # 3. Better error handling
+# 4. Fixed unreachable docstring
 
 import torch
 import numpy as np
+import logging
+from typing import List, Dict, Optional, Any
 from models.gcn_model_sota import CrossGCN
+
+logger = logging.getLogger(__name__)
 
 
 class RelationRefiner:
@@ -87,13 +92,7 @@ class RelationRefiner:
         
         return feat / feat_norm
 
-    def predict_batch(self, track, candidates, frame_w, frame_h, curr_time):
-
-        if self.model is None:
-            # Return 0.5 (neutral) or handle upstream
-            # Returning 0.0 scores (1.0 cost) might be too harsh depending on logic
-            # Returning 0.5 (uncertain) is safer
-            return np.ones(len(candidates)) * 0.5
+    def predict_batch(self, track, candidates, frame_w: int, frame_h: int, curr_time: float) -> np.ndarray:
         """
         Batch Inference: Compare 1 Track against N Candidates.
 
@@ -102,13 +101,18 @@ class RelationRefiner:
                    Must have: robust_id, last_known_feature, last_seen_bbox,
                              last_cam_res, last_seen_timestamp
             candidates: List of dicts with 'feature' and 'bbox' keys
-            frame_w, frame_h: Dimensions of the current camera frame
+            frame_w: Width of the current camera frame
+            frame_h: Height of the current camera frame
             curr_time: Current timestamp for temporal features
 
         Returns:
             scores: Numpy array of shape (N,) with similarity probabilities [0, 1].
                    Higher scores indicate higher match probability.
         """
+        if self.model is None:
+            # Return 0.5 (neutral) when model is not available
+            return np.ones(len(candidates)) * 0.5
+
         if not candidates:
             return np.array([])
 
