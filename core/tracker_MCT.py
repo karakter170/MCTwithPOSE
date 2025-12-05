@@ -9,17 +9,23 @@
 # 5. INTEGRATED: Adaptive Threshold Logic (Improvement 3)
 
 import numpy as np
-from scipy.signal import savgol_filter 
-from numpy.linalg import inv, norm 
-import pickle 
-import time 
-import faiss 
-from datetime import datetime 
+from scipy.signal import savgol_filter
+from numpy.linalg import pinv, norm
+import pickle
+import time
+import faiss
+from datetime import datetime
+from collections import deque
+import logging
 from utils.staff_filter import StaffFilter
 import threading
 from core.hungarian_matcher import TwoStageHungarianMatcher, MatchResult
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional, Any
 from utils.adaptive_threshold import AdaptiveThresholdManager
+
+# Configure logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # FIX #1: Correct import - class was renamed to RelationRefiner
 try:
@@ -37,21 +43,27 @@ except ImportError:
     RERANK_AVAILABLE = False
     def re_ranking(q, g, **kwargs): return None
 
-def get_direction(v):
+def get_direction(v: np.ndarray) -> Tuple[np.ndarray, float]:
+    """Get normalized direction vector and magnitude."""
     m = norm(v)
-    return (v / (m + 1e-6), m) if m > 0 else (np.zeros_like(v), 0)
+    return (v / (m + 1e-6), m) if m > 0 else (np.zeros_like(v), 0.0)
 
-def calculate_iou(bbox1, bbox2):
-    """Intersection over Union (IoU)"""
-    xx1 = max(bbox1[0], bbox2[0]); yy1 = max(bbox1[1], bbox2[1])
-    xx2 = min(bbox1[2], bbox2[2]); yy2 = min(bbox1[3], bbox2[3])
-    w = max(0, xx2 - xx1); h = max(0, yy2 - yy1)
+
+def calculate_iou(bbox1: List[float], bbox2: List[float]) -> float:
+    """Calculate Intersection over Union (IoU) between two bounding boxes."""
+    xx1 = max(bbox1[0], bbox2[0])
+    yy1 = max(bbox1[1], bbox2[1])
+    xx2 = min(bbox1[2], bbox2[2])
+    yy2 = min(bbox1[3], bbox2[3])
+    w = max(0, xx2 - xx1)
+    h = max(0, yy2 - yy1)
     inter_area = w * h
-    area1 = (bbox1[2]-bbox1[0])*(bbox1[3]-bbox1[1])
-    area2 = (bbox2[2]-bbox2[0])*(bbox2[3]-bbox2[1])
+    area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
+    area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
     return inter_area / (area1 + area2 - inter_area + 1e-6)
 
-def cosine_distance(query_vec, gallery_vecs):
+
+def cosine_distance(query_vec: np.ndarray, gallery_vecs: np.ndarray) -> np.ndarray:
     """Fast cosine distance using numpy."""
     if len(gallery_vecs) == 0:
         return np.array([])
@@ -61,9 +73,11 @@ def cosine_distance(query_vec, gallery_vecs):
         distances = np.array([distances])
     return distances
 
-def cosine_distance_single(query, target):
+
+def cosine_distance_single(query: Optional[np.ndarray], target: Optional[np.ndarray]) -> float:
     """Computes distance between 1 query and 1 target (0..2)."""
-    if query is None or target is None: return 2.0
+    if query is None or target is None:
+        return 2.0
     sim = np.dot(query, target)
     return 1.0 - sim
 
@@ -98,7 +112,10 @@ class OCSORTTracker:
         self.last_observation = initial_state[:2]
         self.time_since_update = 0
         self.last_update_time = time.time()
-        self.history_observations = []; self.history_x = []; self.history_y = []
+        # Use deque with maxlen for O(1) pop from front instead of O(n) list.pop(0)
+        self.history_observations: deque = deque(maxlen=10)
+        self.history_x: deque = deque(maxlen=15)
+        self.history_y: deque = deque(maxlen=15)
         self.smooth_pos = initial_state[:2]
 
     def predict(self):
@@ -131,20 +148,29 @@ class OCSORTTracker:
             self.x = np.array([z[0], z[1], virtual_velocity[0], virtual_velocity[1]])
             self.P = np.eye(4) * adaptive_R[0,0] * 5.0 
 
-        y = z - self.H @ self.x 
-        S = self.H @ self.P @ self.H.T + adaptive_R 
-        K = self.P @ self.H.T @ inv(S)
+        y = z - self.H @ self.x
+        S = self.H @ self.P @ self.H.T + adaptive_R
+
+        # Use pseudo-inverse for numerical stability (fixes singular matrix issues)
+        try:
+            cond_num = np.linalg.cond(S)
+            if cond_num > 1e10:
+                logger.warning(f"Ill-conditioned S matrix (cond={cond_num:.2e}), using pseudo-inverse")
+            K = self.P @ self.H.T @ pinv(S)
+        except np.linalg.LinAlgError:
+            logger.error("Matrix inversion failed, using pseudo-inverse fallback")
+            K = self.P @ self.H.T @ pinv(S)
+
         self.x = self.x + K @ y
         self.P = (np.eye(self.P.shape[0]) - K @ self.H) @ self.P
         
         self.last_observation = z
         self.time_since_update = 0
         self.last_update_time = time.time()
+        # deque with maxlen handles automatic eviction - no need for manual pop(0)
         self.history_observations.append(z)
-        if len(self.history_observations) > 10: self.history_observations.pop(0)
-        
-        self.history_x.append(float(self.x[0])); self.history_y.append(float(self.x[1]))
-        if len(self.history_x) > 7: self.history_x.pop(0); self.history_y.pop(0)
+        self.history_x.append(float(self.x[0]))
+        self.history_y.append(float(self.x[1]))
         
         if len(self.history_x) >= 7:
             try:
@@ -155,30 +181,44 @@ class OCSORTTracker:
             self.smooth_pos = self.x[:2]
         return self.x
 
-    def interpolate(self, new_pos, n_steps):
-        if n_steps <= 0: return
+    def interpolate(self, new_pos: np.ndarray, n_steps: int) -> None:
+        """Interpolate positions between last observation and new position."""
+        if n_steps <= 0:
+            return
         start_pos = self.last_observation
         step_vec = (new_pos - start_pos) / (n_steps + 1)
         for i in range(1, n_steps + 1):
             inter_p = start_pos + (step_vec * i)
+            # deque with maxlen handles automatic eviction
             self.history_x.append(float(inter_p[0]))
             self.history_y.append(float(inter_p[1]))
-            if len(self.history_x) > 15:
-                self.history_x.pop(0); self.history_y.pop(0)
 
 
-def uncertainty_adjusted_distance(query, target_mean, target_var):
+def uncertainty_adjusted_distance(
+    query: Optional[np.ndarray],
+    target_mean: Optional[np.ndarray],
+    target_var: Optional[np.ndarray]
+) -> float:
     """
     Computes Cosine Distance, relaxed by the target's Variance (Uncertainty).
+
+    Args:
+        query: Query feature vector
+        target_mean: Target mean feature vector
+        target_var: Target variance vector for uncertainty estimation
+
+    Returns:
+        Adjusted cosine distance (0..2)
     """
-    if query is None or target_mean is None: return 2.0
-    
+    if query is None or target_mean is None:
+        return 2.0
+
     sim = np.dot(query, target_mean)
     raw_dist = 1.0 - sim
-    
+
     if target_var is None:
         return raw_dist
-        
+
     uncertainty = np.mean(target_var)
     SCALE_FACTOR = 5.0
     adjusted_dist = raw_dist / (1.0 + (uncertainty * SCALE_FACTOR))
@@ -265,8 +305,12 @@ class TrackerManagerMCT:
             except Exception as e:
                 print(f"[Central] GCN Load Failed: {e}")
 
-        if not self.redis_client.exists("mct:next_global_id"):
-            self.redis_client.set("mct:next_global_id", 1)
+        # Validate redis_client before use
+        if self.redis_client is not None:
+            if not self.redis_client.exists("mct:next_global_id"):
+                self.redis_client.set("mct:next_global_id", 1)
+        else:
+            logger.warning("Redis client is None - running in standalone mode without persistence")
 
     def _get_staff_filter(self, group_id):
         if group_id not in self.staff_filters:
@@ -421,8 +465,12 @@ class TrackerManagerMCT:
         for track in candidates:
             # DUAL-QUERY matching
             if track.fast_buffer:
-                dists = [cosine_distance_single(q_vec[0], f) for f in track.fast_buffer]
-                dist_fast = min(dists)
+                dists = [cosine_distance_single(q_vec[0], f) for f in track.fast_buffer if f is not None]
+                # Guard against empty dists list after filtering None values
+                if dists:
+                    dist_fast = min(dists)
+                else:
+                    dist_fast = cosine_distance_single(q_vec[0], track.last_known_feature)
             else:
                 dist_fast = cosine_distance_single(q_vec[0], track.last_known_feature)
             
