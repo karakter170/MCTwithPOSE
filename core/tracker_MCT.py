@@ -174,7 +174,17 @@ class OCSORTTracker:
         
         if len(self.history_x) >= 7:
             try:
-                self.smooth_pos = np.array([savgol_filter(self.history_x, 7, 2)[-1], savgol_filter(self.history_y, 7, 2)[-1]])
+                # FIX: Convert deque to numpy array before savgol_filter
+                # Also compute filter once per axis (was computing twice, wasting CPU)
+                x_arr = np.array(self.history_x)
+                y_arr = np.array(self.history_y)
+                smooth_x = savgol_filter(x_arr, 7, 2)[-1]
+                smooth_y = savgol_filter(y_arr, 7, 2)[-1]
+                # Check for NaN/Inf from filter (can happen with bad data)
+                if np.isfinite(smooth_x) and np.isfinite(smooth_y):
+                    self.smooth_pos = np.array([smooth_x, smooth_y])
+                else:
+                    self.smooth_pos = self.x[:2]
             except (ValueError, IndexError):
                 self.smooth_pos = self.x[:2]
         else:
