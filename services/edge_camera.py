@@ -65,12 +65,14 @@ class CameraMotionCompensation:
         curr_keypoints, status, err = cv2.calcOpticalFlowPyrLK(
             self.prev_frame, curr_gray, self.prev_keypoints, None
         )
-        
-        if curr_keypoints is None:
+
+        # FIX: Check both curr_keypoints AND status for None (was only checking curr_keypoints)
+        # status can be None when optical flow fails (e.g., blank frames, uniform backgrounds)
+        if curr_keypoints is None or status is None:
             self.prev_frame = curr_gray
             self.warp_matrix = np.eye(2, 3, dtype=np.float32)
             return self.warp_matrix
-            
+
         valid_curr = curr_keypoints[status.ravel() == 1]
         valid_prev = self.prev_keypoints[status.ravel() == 1]
         

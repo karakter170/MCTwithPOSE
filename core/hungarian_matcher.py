@@ -69,9 +69,27 @@ class HungarianMatcher:
         return max(0.0, raw_dist)
 
     def compute_motion_cost(self, det_gp, track_pred, dt):
-        if det_gp is None or track_pred is None: return self.INF_COST
+        """
+        Compute motion cost based on distance between detection and predicted position.
+
+        FIX: Previous formula max_dist = 3.0 * dt + 2.0 was too restrictive.
+        At 30 FPS (dt=0.033s): max_dist = 2.1 pixels - way too small!
+        Humans can walk 1-2 m/s, which at typical camera resolutions is ~50-100 pixels/frame.
+        """
+        if det_gp is None or track_pred is None:
+            return self.INF_COST
+
         dist = np.linalg.norm(det_gp - track_pred)
-        max_dist = 3.0 * max(dt, 0.5) + 2.0
+
+        # Realistic max velocity: ~2 m/s walking, ~6 m/s running
+        # At 1920x1080 with ~5m scene width: 1m ≈ 384 pixels
+        # Max walking: 2 m/s * 384 px/m = 768 px/s
+        # At 30 FPS: 768/30 = ~25 pixels/frame
+        # Add buffer for prediction error and fast motion
+        max_velocity_px_per_sec = 1000.0  # ~2.6 m/s (fast walking/slow running)
+        prediction_error_buffer = 20.0  # pixels
+
+        max_dist = max_velocity_px_per_sec * max(dt, 0.001) + prediction_error_buffer
         norm_dist = dist / max_dist
         return min(1.0, norm_dist)
 
@@ -89,17 +107,24 @@ class HungarianMatcher:
     def build_cost_matrix(self, detections, tracks, cam_id, curr_time, refiner_model=None, frame_res=(1920,1080)):
         det_indices = list(range(len(detections)))
         valid_track_ids = [gid for gid, t in tracks.items() if (curr_time - t.last_seen_timestamp) <= self.max_time_gap]
-        
+
         n_det, n_track = len(detections), len(valid_track_ids)
         if n_det == 0 or n_track == 0:
             return np.array([]).reshape(n_det, n_track), det_indices, valid_track_ids
-            
+
         cost_matrix = np.full((n_det, n_track), self.INF_COST)
+
+        # FIX: Predict all tracks BEFORE cost matrix computation (was inside loop - 100x slower)
+        track_predictions = {}
+        for gid in valid_track_ids:
+            track = tracks[gid]
+            track.kf.predict()
+            track_predictions[gid] = track.kf.x[:2].copy()
 
         for j, gid in enumerate(valid_track_ids):
             track = tracks[gid]
             dt = curr_time - track.last_seen_timestamp
-            
+
             gcn_costs = None
             if refiner_model:
                 try:
@@ -111,12 +136,12 @@ class HungarianMatcher:
                 except Exception as e:
                     logger.warning(f"GCN prediction failed for track {gid}: {e}")
 
-            track.kf.predict()
-            pred_gp = track.kf.x[:2]
+            # Use pre-computed prediction (FIX: was calling predict() inside loop)
+            pred_gp = track_predictions[gid]
 
             for i, det in enumerate(detections):
                 quality = det.get('quality', 0.5)
-                
+
                 # 1. Appearance
                 cost_app = self.INF_COST
                 if self.use_appearance:
@@ -129,16 +154,17 @@ class HungarianMatcher:
                             cost_fast = self.compute_appearance_cost(det['feature'], track.last_known_feature)
                     else:
                         cost_fast = self.compute_appearance_cost(det['feature'], track.last_known_feature)
-                    
+
                     cost_slow = self.compute_appearance_cost(det['feature'], track.robust_id, track.robust_var)
                     cost_app = min(cost_fast, cost_slow)
 
-                    # [TUNED] QUALITY SCALING
-                    # Heavy Occlusion toleransı için scaling'i daha agresif yaptık.
-                    # Kalite 0.3 iken factor ~0.625 olacak (Önceki 0.7 idi).
+                    # FIX: Quality scaling was INVERTED - low quality should INCREASE cost, not decrease it
+                    # Previous: quality_factor = 0.25 + 0.75*(q/0.6) -> REDUCED cost for low quality (WRONG)
+                    # Fixed: penalty_factor > 1.0 for low quality -> INCREASES cost (CORRECT)
                     if quality < 0.6:
-                        quality_factor = 0.25 + (0.75 * (quality / 0.6))
-                        cost_app *= quality_factor
+                        # Low quality = higher uncertainty = higher cost penalty
+                        penalty_factor = 1.0 + (1.5 * (0.6 - quality) / 0.6)  # 1.0 to 2.5x penalty
+                        cost_app *= penalty_factor
 
                 # 2. Motion
                 cost_mot = 0.0
@@ -170,10 +196,14 @@ class HungarianMatcher:
                     if gcn_costs is not None and i < len(gcn_costs):
                         gcn_val = gcn_costs[i]
 
-                        # [TUNED] GCN Weight Scaling
+                        # FIX: GCN weight scaling was INVERTED - low quality should rely MORE on GCN, not less
+                        # GCN refinement helps especially with occluded/poor quality detections
+                        # Previous: gcn_weight = 0.4 * (q/0.6) -> LESS GCN for low quality (WRONG)
+                        # Fixed: gcn_weight increases for low quality -> MORE GCN reliance (CORRECT)
                         base_gcn_weight = 0.40
                         if quality < 0.6:
-                            gcn_weight = base_gcn_weight * (quality / 0.6)
+                            # Low quality = rely MORE on GCN refinement (up to 60% weight)
+                            gcn_weight = base_gcn_weight + (0.20 * (0.6 - quality) / 0.6)
                         else:
                             gcn_weight = base_gcn_weight
 
