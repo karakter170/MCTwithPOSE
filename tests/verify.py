@@ -34,8 +34,8 @@ def test_gcn_import():
         import importlib.util
         
         # Read the tracker_MCT.py file
-        if os.path.exists('tracker_MCT.py'):
-            with open('tracker_MCT.py', 'r') as f:
+        if os.path.exists('core/tracker_MCT.py'):
+            with open('core/tracker_MCT.py', 'r') as f:
                 content = f.read()
             
             if 'RelationRefiner as GCNHandler' in content:
@@ -61,10 +61,10 @@ def test_faiss_lock():
     print("-" * 40)
     
     try:
-        if os.path.exists('tracker_MCT.py'):
-            with open('tracker_MCT.py', 'r') as f:
+        if os.path.exists('core/tracker_MCT.py'):
+            with open('core/tracker_MCT.py', 'r') as f:
                 content = f.read()
-            
+
             # Check for lock around FAISS add operations
             # Look for the pattern: with self._faiss_lock: ... faiss_index.add
             
@@ -112,7 +112,7 @@ def test_faiss_lock():
                 print_result("Update FAISS lock", False, "No lock found in update method")
                 return False
         else:
-            print_result("FAISS lock", False, "tracker_MCT.py not found")
+            print_result("FAISS lock", False, "core/tracker_MCT.py not found")
             return False
             
     except Exception as e:
@@ -125,10 +125,10 @@ def test_pending_track_cleanup():
     print("-" * 40)
     
     try:
-        if os.path.exists('tracker_MCT.py'):
-            with open('tracker_MCT.py', 'r') as f:
+        if os.path.exists('core/tracker_MCT.py'):
+            with open('core/tracker_MCT.py', 'r') as f:
                 content = f.read()
-            
+
             # Check if _run_garbage_collection cleans pending_tracks
             gc_section = content[content.find('def _run_garbage_collection'):]
             gc_section = gc_section[:gc_section.find('\n    def ') if '\n    def ' in gc_section else len(gc_section)]
@@ -140,7 +140,7 @@ def test_pending_track_cleanup():
                 print_result("Pending cleanup", False, "No pending tracks cleanup in GC")
                 return False
         else:
-            print_result("Pending cleanup", False, "tracker_MCT.py not found")
+            print_result("Pending cleanup", False, "core/tracker_MCT.py not found")
             return False
             
     except Exception as e:
@@ -153,8 +153,8 @@ def test_feature_normalization():
     print("-" * 40)
     
     try:
-        if os.path.exists('gcn_handler.py'):
-            with open('gcn_handler.py', 'r') as f:
+        if os.path.exists('models/gcn_handler.py'):
+            with open('models/gcn_handler.py', 'r') as f:
                 content = f.read()
             
             # Check if normalization is always applied (not just warned)
@@ -184,7 +184,7 @@ def test_feature_normalization():
                 print_result("Candidate feat norm", False, "Candidates not normalized")
                 return False
         else:
-            print_result("Feature norm", False, "gcn_handler.py not found")
+            print_result("Feature norm", False, "models/gcn_handler.py not found")
             return False
             
     except Exception as e:
@@ -197,8 +197,8 @@ def test_reranking_division():
     print("-" * 40)
     
     try:
-        if os.path.exists('re_ranking.py'):
-            with open('re_ranking.py', 'r') as f:
+        if os.path.exists('utils/re_ranking.py'):
+            with open('utils/re_ranking.py', 'r') as f:
                 content = f.read()
             
             # Check for torch.clamp usage
@@ -212,7 +212,7 @@ def test_reranking_division():
                 print_result("Division safety", False, "No safe division pattern found")
                 return False
         else:
-            print_result("Division safety", False, "re_ranking.py not found")
+            print_result("Division safety", False, "utils/re_ranking.py not found")
             return False
             
     except Exception as e:
@@ -225,8 +225,8 @@ def test_quality_bounds():
     print("-" * 40)
     
     try:
-        if os.path.exists('edge_camera.py'):
-            with open('edge_camera.py', 'r') as f:
+        if os.path.exists('services/edge_camera.py'):
+            with open('services/edge_camera.py', 'r') as f:
                 content = f.read()
             
             # Find the calculate_quality_score function
@@ -248,7 +248,7 @@ def test_quality_bounds():
                 print_result("Quality bounds", False, "Function not found")
                 return False
         else:
-            print_result("Quality bounds", False, "edge_camera.py not found")
+            print_result("Quality bounds", False, "services/edge_camera.py not found")
             return False
             
     except Exception as e:
@@ -265,14 +265,14 @@ def test_runtime_import():
         sys.path.insert(0, '.')
         
         try:
-            from gcn_handler import RelationRefiner
+            from models.gcn_handler import RelationRefiner
             print_result("gcn_handler import", True)
         except ImportError as e:
             print_result("gcn_handler import", False, str(e))
             return False
-        
+
         try:
-            from continuum_memory import ContinuumStateV2
+            from core.continuum_memory import ContinuumStateV2
             print_result("continuum_memory import", True)
         except ImportError as e:
             print_result("continuum_memory import", False, str(e))

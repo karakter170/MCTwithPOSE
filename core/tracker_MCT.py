@@ -15,25 +15,25 @@ import pickle
 import time 
 import faiss 
 from datetime import datetime 
-from staff_filter import StaffFilter
+from utils.staff_filter import StaffFilter
 import threading
-from hungarian_matcher import TwoStageHungarianMatcher, MatchResult
+from core.hungarian_matcher import TwoStageHungarianMatcher, MatchResult
 from typing import List, Dict, Tuple
-from adaptive_threshold import AdaptiveThresholdManager
+from utils.adaptive_threshold import AdaptiveThresholdManager
 
 # FIX #1: Correct import - class was renamed to RelationRefiner
 try:
-    from gcn_handler import RelationRefiner as GCNHandler
+    from models.gcn_handler import RelationRefiner as GCNHandler
     GCN_AVAILABLE = True
 except ImportError:
-    print("WARNING: 'gcn_handler.py' not found! GCN disabled.")
+    print("WARNING: 'models/gcn_handler.py' not found! GCN disabled.")
     GCN_AVAILABLE = False
 
 try:
-    from re_ranking import re_ranking
+    from utils.re_ranking import re_ranking
     RERANK_AVAILABLE = True
 except ImportError:
-    print("WARNING: 're_ranking.py' not found! Re-Ranking disabled.")
+    print("WARNING: 'utils/re_ranking.py' not found! Re-Ranking disabled.")
     RERANK_AVAILABLE = False
     def re_ranking(q, g, **kwargs): return None
 

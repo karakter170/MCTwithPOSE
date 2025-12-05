@@ -21,14 +21,14 @@ import json
 from unittest.mock import MagicMock, patch
 from typing import List, Dict
 
-# Proje modüllerini import et (Dosya yollarının düzgün ayarlandığını varsayıyoruz)
+# Import project modules (assumes proper PYTHONPATH setup)
 try:
-    from tracker_MCT import TrackerManagerMCT, GlobalTrack
-    from hungarian_matcher import MatchResult
-    from adaptive_threshold import AdaptiveThresholdManager
-    from continuum_memory import ContinuumStateV2
+    from core.tracker_MCT import TrackerManagerMCT, GlobalTrack
+    from core.hungarian_matcher import MatchResult
+    from utils.adaptive_threshold import AdaptiveThresholdManager
+    from core.continuum_memory import ContinuumStateV2
 except ImportError as e:
-    raise ImportError(f"Proje dosyaları bulunamadı. Lütfen PYTHONPATH'i ayarlayın. Hata: {e}")
+    raise ImportError(f"Project files not found. Please set PYTHONPATH. Error: {e}")
 
 
 # --- MOCK SINIFLAR ---

@@ -4,7 +4,7 @@ import pickle
 import time
 from flask import Flask, jsonify, request, render_template, Response
 from flask_cors import CORS
-from staff_filter import StaffFilter
+from utils.staff_filter import StaffFilter
 import numpy as np
 
 app = Flask(__name__, template_folder='templates')
